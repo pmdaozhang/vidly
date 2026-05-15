@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube 热搜选题抓取工具</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f5f5; color: #333; padding: 30px; }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 { text-align: center; margin-bottom: 8px; font-size: 28px; }
+        .subtitle { text-align: center; color: #666; margin-bottom: 30px; font-size: 14px; }
+        .card { background: #fff; border-radius: 10px; padding: 24px; box-shadow: 0 2px 8px rgba(0,0,0,0.08); margin-bottom: 20px; }
+        .form-row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 13px; font-weight: 600; color: #555; }
+        .form-group input, .form-group select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 6px; font-size: 14px; }
+        .form-group input { min-width: 300px; }
+        .form-group input:focus, .form-group select:focus { outline: none; border-color: #ff0000; box-shadow: 0 0 0 2px rgba(255,0,0,0.1); }
+        .btn { background: #ff0000; color: #fff; border: none; padding: 9px 28px; border-radius: 6px; font-size: 14px; font-weight: 600; cursor: pointer; }
+        .btn:hover { background: #cc0000; }
+        .btn:disabled { opacity: .6; cursor: not-allowed; }
+        .error { color: #d32f2f; background: #fbe9e7; padding: 10px 16px; border-radius: 6px; margin-top: 16px; display: none; }
+        .loading { text-align: center; padding: 40px; display: none; }
+        .spinner { width: 36px; height: 36px; border: 4px solid #eee; border-top-color: #ff0000; border-radius: 50%; animation: spin .8s linear infinite; margin: 0 auto 12px; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .keyword-section { margin-bottom: 28px; }
+        .keyword-section:last-child { margin-bottom: 0; }
+        .keyword-title { font-size: 16px; font-weight: 700; margin-bottom: 10px; color: #ff0000; }
+        table { width: 100%; border-collapse: collapse; }
+        th { background: #fafafa; text-align: left; padding: 10px 12px; font-size: 13px; color: #666; border-bottom: 2px solid #eee; }
+        td { padding: 10px 12px; border-bottom: 1px solid #f0f0f0; font-size: 14px; }
+        tr:hover td { background: #fafafa; }
+        .title-cell { max-width: 400px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .title-cell a { color: #1a0dab; text-decoration: none; }
+        .title-cell a:hover { text-decoration: underline; }
+        .views { text-align: right; font-variant-numeric: tabular-nums; }
+        .no-results { text-align: center; padding: 20px; color: #999; }
+        .status-badge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; }
+        .status-ok { background: #e8f5e9; color: #2e7d32; }
+        .status-err { background: #fbe9e7; color: #d32f2f; }
+    </style>
+</head>
+<body>
+<div class="container">
+    <h1>YouTube 热搜选题抓取工具</h1>
+    <p class="subtitle">输入关键词，按播放量排序获取 YouTube 热门视频</p>
+
+    <div class="card">
+        <form id="searchForm" onsubmit="return doSearch(event)">
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="keywords">关键词（多个用逗号分隔）</label>
+                    <input type="text" id="keywords" placeholder="如: AI, Python, 机器学习" value="AI" required>
+                </div>
+                <div class="form-group">
+                    <label for="language">语言过滤</label>
+                    <select id="language">
+                        <option value="zh" selected>中文 🇨🇳</option>
+                        <option value="en">English 🇺🇸</option>
+                        <option value="all">不限</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="timeRange">时间范围</label>
+                    <select id="timeRange">
+                        <option value="">不限</option>
+                        <option value="last week" selected>过去一周</option>
+                        <option value="last month">过去一月</option>
+                        <option value="last year">过去一年</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="duration">视频时长</label>
+                    <select id="duration">
+                        <option value="all" selected>不限</option>
+                        <option value="short">Shorts / 短视频 (≤4分钟)</option>
+                        <option value="medium">中等 (4-20分钟)</option>
+                        <option value="long">长视频 (&gt;20分钟)</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="maxResults">每关键词结果数</label>
+                    <select id="maxResults">
+                        <option value="5">5</option>
+                        <option value="10" selected>10</option>
+                        <option value="20">20</option>
+                    </select>
+                </div>
+                <button type="submit" class="btn" id="searchBtn">搜索</button>
+            </div>
+        </form>
+        <div class="error" id="errorMsg"></div>
+    </div>
+
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <div>正在搜索，请稍候...</div>
+    </div>
+
+    <div id="results"></div>
+
+    <div class="card" style="font-size: 13px; color: #888;">
+        <strong>使用提示：</strong>
+        在项目根目录创建 <code>.env</code> 文件，写入 <code>YOUTUBE_API_KEY=你的密钥</code>。
+        获取 API Key：<a href="https://console.cloud.google.com/apis/credentials" target="_blank">Google Cloud Console</a>
+    </div>
+</div>
+
+<script>
+async function doSearch(e) {
+    e.preventDefault();
+    const keywords = document.getElementById('keywords').value.trim();
+    const language = document.getElementById('language').value;
+    const timeRange = document.getElementById('timeRange').value;
+    const maxResults = document.getElementById('maxResults').value;
+    const duration = document.getElementById('duration').value;
+    const btn = document.getElementById('searchBtn');
+    const loading = document.getElementById('loading');
+    const error = document.getElementById('errorMsg');
+    const results = document.getElementById('results');
+
+    error.style.display = 'none';
+    results.innerHTML = '';
+    btn.disabled = true;
+    loading.style.display = 'block';
+
+    try {
+        const resp = await fetch('/api/search', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ keywords, language, time_range: timeRange, max_results: maxResults, duration: duration })
+        });
+        const data = await resp.json();
+        if (data.error) {
+            error.textContent = data.error;
+            error.style.display = 'block';
+            return;
+        }
+        renderResults(data);
+    } catch (err) {
+        error.textContent = '请求失败: ' + err.message;
+        error.style.display = 'block';
+    } finally {
+        btn.disabled = false;
+        loading.style.display = 'none';
+    }
+}
+
+function renderResults(data) {
+    const container = document.getElementById('results');
+    let html = '';
+    for (const [keyword, items] of Object.entries(data)) {
+        html += '<div class="keyword-section card">';
+        html += `<div class="keyword-title"># ${keyword}</div>`;
+        if (items.length === 0) {
+            html += '<div class="no-results">未找到结果</div>';
+        } else {
+            html += '<table><thead><tr>';
+            html += '<th style="width:4%">#</th>';
+            html += '<th>标题</th>';
+            html += '<th style="width:10%;text-align:right">播放量</th>';
+            html += '<th style="width:8%">时长</th>';
+            html += '<th style="width:16%">频道</th>';
+            html += '<th style="width:12%">发布时间</th>';
+            html += '<th style="width:8%">链接</th>';
+            html += '</tr></thead><tbody>';
+            items.forEach((v, i) => {
+                const views = Number(v.view_count).toLocaleString();
+                const flag = v.lang_flag || '';
+                html += `<tr>
+                    <td>${i + 1}</td>
+                    <td class="title-cell"><a href="${v.url}" target="_blank" title="${v.title}">${flag} ${v.title}</a></td>
+                    <td class="views">${views}</td>
+                    <td style="text-align:center">${v.duration || '-'}</td>
+                    <td>${v.channel}</td>
+                    <td>${v.published_at.slice(0, 10)}</td>
+                    <td><a href="${v.url}" target="_blank">打开</a></td>
+                </tr>`;
+            });
+            html += '</tbody></table>';
+        }
+        html += '</div>';
+    }
+    container.innerHTML = html;
+}
+</script>
+</body>
+</html>
