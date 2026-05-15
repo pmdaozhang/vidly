@@ -148,6 +148,13 @@ def search_videos(
         })
 
     results.sort(key=lambda x: x["view_count"], reverse=True)
+
+    # 严格语言过滤：relevanceLanguage 只是提示，API 仍会返回其他语言的视频
+    if language == "zh":
+        results = [r for r in results if _has_chinese(r["title"])]
+    elif language == "en":
+        results = [r for r in results if not _has_chinese(r["title"])]
+
     return results
 
 
