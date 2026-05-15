@@ -1,3 +1,4 @@
+import os
 import re
 import requests
 from datetime import datetime, timedelta, timezone
@@ -5,17 +6,15 @@ from typing import Optional
 
 from config import YOUTUBE_API_KEY, BASE_URL, MAX_RESULTS
 
-# videoDuration param values: any, short, medium, long
+# Proxy: use env vars if set (cloud servers usually direct), otherwise try local proxy
+PROXY = os.environ.get("HTTP_PROXY") or os.environ.get("HTTPS_PROXY") or ""
+PROXIES = {"http": PROXY, "https": PROXY} if PROXY else {}
+
 DURATION_MAP = {
     "all": "any",
     "short": "short",
     "medium": "medium",
     "long": "long",
-}
-
-PROXIES = {
-    "http": "http://127.0.0.1:7897",
-    "https": "http://127.0.0.1:7897",
 }
 
 TIME_MAP = {
@@ -42,7 +41,6 @@ def _has_chinese(text: str) -> bool:
 
 
 def _detect_lang_flag(title: str, language: str) -> str:
-    """Determine the language flag emoji for a video title."""
     if language == "zh":
         return "[CN]"
     elif language == "en":
@@ -59,19 +57,20 @@ def _published_after(time_range: str) -> str:
 
 
 def _parse_duration(iso_duration: str) -> str:
-    """Convert ISO 8601 duration (e.g. PT4M30S) to human-readable format."""
-    if not iso_duration:
-        return ""
-    hours = re.search(r"(\d+)H", iso_duration)
-    minutes = re.search(r"(\d+)M", iso_duration)
-    seconds = re.search(r"(\d+)S", iso_duration)
-    h = int(hours.group(1)) if hours else 0
-    m = int(minutes.group(1)) if minutes else 0
-    s = int(seconds.group(1)) if seconds else 0
+    """Convert ISO 8601 duration (PT4M30S) to readable format (4:30)."""
+    import re
+    m = re.search(r"PT?(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?", iso_duration)
+    if not m:
+        return iso_duration
+    h, mi, s = m.groups()
+    parts = []
     if h:
-        return f"{h}:{m:02d}:{s:02d}"
-    else:
-        return f"{m}:{s:02d}"
+        parts.append(h)
+    mi = mi or "0"
+    parts.append(mi.zfill(2) if h else mi)
+    s = s or "0"
+    parts.append(s.zfill(2))
+    return ":".join(parts)
 
 
 def search_videos(
@@ -91,14 +90,13 @@ def search_videos(
     }
     if language in ("zh", "en"):
         params["relevanceLanguage"] = language
+    duration_param = DURATION_MAP.get(duration, "any")
+    if duration_param != "any":
+        params["videoDuration"] = duration_param
 
     published_after = _published_after(time_range)
     if published_after:
         params["publishedAfter"] = published_after
-
-    video_duration = DURATION_MAP.get(duration)
-    if video_duration and video_duration != "any":
-        params["videoDuration"] = video_duration
 
     resp = requests.get(f"{BASE_URL}/search", params=params, proxies=PROXIES)
     resp.raise_for_status()
@@ -121,32 +119,33 @@ def search_videos(
 
     stats_map = {}
     for item in stats_data.get("items", []):
-        stats_map[item["id"]] = item
+        stats_map[item["id"]] = {
+            "statistics": item.get("statistics", {}),
+            "contentDetails": item.get("contentDetails", {}),
+        }
 
     results = []
     for item in items:
         vid = item["id"]["videoId"]
         snippet = item["snippet"]
-        full = stats_map.get(vid, {})
-        stat = full.get("statistics", {})
-        content = full.get("contentDetails", {})
+        combined = stats_map.get(vid, {})
+        stat = combined.get("statistics", {})
+        details = combined.get("contentDetails", {})
         try:
             view_count = int(stat.get("viewCount", 0))
         except (ValueError, TypeError):
             view_count = 0
 
-        results.append(
-            {
-                "title": snippet["title"],
-                "video_id": vid,
-                "url": f"https://www.youtube.com/watch?v={vid}",
-                "channel": snippet["channelTitle"],
-                "published_at": snippet["publishedAt"],
-                "view_count": view_count,
-                "lang_flag": _detect_lang_flag(snippet["title"], language),
-                "duration": _parse_duration(content.get("duration", "")),
-            }
-        )
+        results.append({
+            "title": snippet["title"],
+            "video_id": vid,
+            "url": f"https://www.youtube.com/watch?v={vid}",
+            "channel": snippet["channelTitle"],
+            "published_at": snippet["publishedAt"],
+            "view_count": view_count,
+            "duration": _parse_duration(details.get("duration", "")),
+            "lang_flag": _detect_lang_flag(snippet["title"], language),
+        })
 
     results.sort(key=lambda x: x["view_count"], reverse=True)
     return results
